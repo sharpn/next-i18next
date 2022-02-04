@@ -1,40 +1,36 @@
-import React, { useMemo } from 'react'
 import hoistNonReactStatics from 'hoist-non-react-statics'
-import { I18nextProvider } from 'react-i18next'
+import { i18n as I18NextClient } from 'i18next'
 import type { AppProps as NextJsAppProps } from 'next/app'
-
+import React, { useMemo } from 'react'
+import { I18nextProvider } from 'react-i18next'
 import { createConfig } from './config/createConfig'
 import createClient from './createClient'
+import { InternalConfig, SSRConfig, UserConfig } from './types'
 
-import { SSRConfig, UserConfig } from './types'
-
-import { i18n as I18NextClient } from 'i18next'
 export { Trans, useTranslation, withTranslation } from 'react-i18next'
 
 type AppProps = NextJsAppProps & {
-  pageProps: SSRConfig
+  pageProps?: SSRConfig
 }
 
-export let globalI18n: I18NextClient | null = null
+export let globalI18n: I18NextClient
+export let globalConfig: InternalConfig
 
-export const appWithTranslation = <Props extends AppProps = AppProps>(
-  WrappedComponent: React.ComponentType<Props>,
+export const appWithTranslation = (
+  WrappedComponent: React.ComponentType<AppProps>,
   configOverride: UserConfig | null = null,
 ) => {
-  const AppWithTranslation = (props: Props) => {
+  const AppWithTranslation = (props: AppProps) => {
     const { _nextI18Next } = props.pageProps as SSRConfig
-    let locale = null
+    let {locale} = props.router
 
     // Memoize the instance and only re-initialize when either:
     // 1. The route changes (non-shallowly)
     // 2. Router locale changes
-    const i18n: I18NextClient | null = useMemo(() => {
-      if (!_nextI18Next) return null
-
-      let { userConfig } = _nextI18Next
+    // 3. UserConfig override changes
+    const {config, i18n}= useMemo(() => {
+      let {userConfig} = _nextI18Next
       const { initialI18nStore, initialLocale } = _nextI18Next
-
-      locale = initialLocale
 
       if (userConfig === null && configOverride === null) {
         throw new Error('appWithTranslation was called without a next-i18next config')
@@ -48,19 +44,31 @@ export const appWithTranslation = <Props extends AppProps = AppProps>(
         throw new Error('appWithTranslation was called without config.i18n')
       }
 
-      const instance = createClient({
-        ...createConfig({
-          ...userConfig,
-          lng: locale,
-        }),
+      if (!userConfig?.i18n?.defaultLocale) {
+        throw new Error('config.i18n does not include a defaultLocale property')
+      }
+
+      if (!locale) {
+        locale = initialLocale || userConfig.i18n.defaultLocale
+      }
+
+      const config = createConfig({
+        ...userConfig,
         lng: locale,
-        resources: initialI18nStore,
-      }).i18n
+      })
 
-      globalI18n = instance
+      return {
+        config,
+        i18n: createClient({
+          ...config,
+          lng: locale,
+          resources: initialI18nStore,
+        }).i18n,
+      }
+    }, [_nextI18Next, locale, configOverride])
 
-      return instance
-    }, [_nextI18Next, locale])
+    globalConfig = config
+    globalI18n = i18n
 
     return i18n !== null ? (
       <I18nextProvider
